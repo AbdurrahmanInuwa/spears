@@ -1,0 +1,26 @@
+// Prisma schema — SPAERS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Citizen {
+  id               String   @id @default(uuid())
+  firstName        String
+  lastName         String
+  dob              DateTime
+  email            String   @unique
+  phone            String
+  bloodGroup       String?
+  allergies        String?
+  chronicCondition String?
+  implantDevice    Boolean  @default(false)
+  passwordHash     String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
