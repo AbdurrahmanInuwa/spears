@@ -21,7 +21,10 @@ export default function InstitutionReview({
   const hasCoords =
     typeof form.addressLat === 'number' && typeof form.addressLng === 'number';
   const center = hasCoords
-    ? { lat: form.addressLat, lng: form.addressLng }
+    ? {
+        lat: form.centerLat ?? form.addressLat,
+        lng: form.centerLng ?? form.addressLng,
+      }
     : null;
   const polygon = form.coveragePolygon || [];
 
@@ -89,6 +92,12 @@ export default function InstitutionReview({
               Pinned Address
             </p>
             <p className="mt-1 text-sm text-slate-800">{form.address || '—'}</p>
+            {form.coverageReason && (
+              <p className="mt-2 text-xs text-slate-600">
+                <span className="mr-1 text-brand">✨</span>
+                {form.coverageReason}
+              </p>
+            )}
           </div>
         </div>
 

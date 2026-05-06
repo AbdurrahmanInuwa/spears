@@ -1,7 +1,7 @@
 import './globals.css';
-import Header from './components/Header';
-import Footer from './components/Footer';
+import AppChrome from './components/AppChrome';
 import { ToastProvider } from './components/Toast';
+import { AuthProvider } from './lib/auth';
 
 export const metadata = {
   title: 'SPAERS — Smart Panic Alert & Emergency Response System',
@@ -12,12 +12,12 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className="h-dvh flex flex-col overflow-hidden">
-        <ToastProvider>
-          <Header />
-          <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
-          <Footer />
-        </ToastProvider>
+      <body className="flex min-h-dvh flex-col md:h-dvh md:overflow-hidden">
+        <AuthProvider>
+          <ToastProvider>
+            <AppChrome>{children}</AppChrome>
+          </ToastProvider>
+        </AuthProvider>
       </body>
     </html>
   );

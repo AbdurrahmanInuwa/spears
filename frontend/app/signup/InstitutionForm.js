@@ -1,30 +1,73 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import FormShell, { Field, inputClass } from './FormShell';
 import AddressAutocomplete from '../components/AddressAutocomplete';
 import InstitutionReview from './InstitutionReview';
 import InstitutionCoverageEditor from './InstitutionCoverageEditor';
+import InstitutionPassword from './InstitutionPassword';
 import { useToast } from '../components/Toast';
+import OtpVerifyForm from '../components/OtpVerifyForm';
 import { getCountries, getDialCode } from '../lib/countries';
 import { generateCirclePolygon } from '../lib/geometry';
 
+const RAW = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_URL = RAW.replace(/\/+$/, '').endsWith('/api')
+  ? RAW.replace(/\/+$/, '')
+  : `${RAW.replace(/\/+$/, '')}/api`;
+
 const DEFAULT_COVERAGE_RADIUS_M = 2000; // 2 km
 
+const INSTITUTION_TYPES = [
+  // Medical
+  'Hospital',
+  'Clinic',
+  'Pharmacy',
+  'Ambulance Hub',
+  // Public safety
+  'Police Station',
+  'Fire Station',
+  // Education
+  'School',
+  'University',
+  'College',
+  // Civic / public buildings
+  'Government Office',
+  'Embassy',
+  'Place of Worship',
+  // Commercial / public venues
+  'Mall',
+  'Stadium',
+  'Hotel',
+  'Airport',
+  'Bus / Train Station',
+  // Industrial
+  'Factory',
+  'Other',
+];
+
 export default function InstitutionForm({ onBack }) {
+  const router = useRouter();
   const toast = useToast();
   const countries = useMemo(() => getCountries(), []);
-  const [view, setView] = useState('form'); // 'form' | 'review' | 'coverage'
+  const [view, setView] = useState('form'); // 'form' | 'review' | 'coverage' | 'password' | 'otp'
+  const [pendingEmail, setPendingEmail] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     name: '',
+    type: '', // Hospital | Clinic | Police Station | Fire Station | Ambulance Hub | Other
     yearEstablished: '',
     country: '', // ISO 3166-1 alpha-2 (e.g. 'KE', 'US')
     address: '',
     addressLat: null,
     addressLng: null,
     addressPlaceId: null,
+    centerLat: null, // user-confirmed center (may differ from Google's pin)
+    centerLng: null,
     coveragePolygon: null, // Array<{lat,lng}>
+    coverageRadiusM: DEFAULT_COVERAGE_RADIUS_M,
+    coverageReason: null, // explanation if AI sized it
   });
   const dialCode = getDialCode(form.country);
   const [responseNumbers, setResponseNumbers] = useState(['']);
@@ -68,12 +111,25 @@ export default function InstitutionForm({ onBack }) {
       return;
     }
 
-    // Generate the default 2km polygon if the user hasn't customized one yet
+    if (!form.type) {
+      toast('Please pick an institution type', { variant: 'error' });
+      return;
+    }
+    if (!responseEmails.some((e) => e && e.trim())) {
+      toast('Add at least one response email — the first one is your username', {
+        variant: 'error',
+      });
+      return;
+    }
+
+    // Initialize center to Google's pin and generate the default polygon
     setForm((f) =>
       f.coveragePolygon
         ? f
         : {
             ...f,
+            centerLat: f.centerLat ?? f.addressLat,
+            centerLng: f.centerLng ?? f.addressLng,
             coveragePolygon: generateCirclePolygon(
               { lat: f.addressLat, lng: f.addressLng },
               DEFAULT_COVERAGE_RADIUS_M
@@ -83,24 +139,69 @@ export default function InstitutionForm({ onBack }) {
     setView('review');
   }
 
-  async function handleConfirm() {
-    // Step 2: final submission. (Backend endpoint not built yet — wire it
-    // here once /api/institutions/signup exists.)
+  // Coverage-area "Confirm" simply moves to the password step.
+  function handleCoverageConfirm() {
+    setView('password');
+  }
+
+  // Password step "Create Account" → final submission.
+  async function handleFinalSubmit(password) {
+    const cleanedEmails = responseEmails
+      .map((e) => e.trim())
+      .filter(Boolean);
+    if (cleanedEmails.length === 0) {
+      toast('Add at least one response email (used as username)', {
+        variant: 'error',
+      });
+      return;
+    }
+    const cleanedNumbers = responseNumbers
+      .filter(Boolean)
+      .map((n) =>
+        dialCode ? `+${dialCode}${n.replace(/\D/g, '')}` : n.trim()
+      );
+
     setSubmitting(true);
     try {
       const payload = {
-        ...form,
-        responseNumbers: responseNumbers
-          .filter(Boolean)
-          .map((n) => (dialCode ? `+${dialCode}${n.replace(/\D/g, '')}` : n)),
-        responseEmails: responseEmails.filter(Boolean),
+        name: form.name,
+        type: form.type,
+        yearEstablished: form.yearEstablished
+          ? Number(form.yearEstablished)
+          : null,
+        country: form.country,
+        address: form.address,
+        addressLat: form.addressLat,
+        addressLng: form.addressLng,
+        addressPlaceId: form.addressPlaceId,
+        centerLat: form.centerLat ?? form.addressLat,
+        centerLng: form.centerLng ?? form.addressLng,
+        coveragePolygon: form.coveragePolygon,
+        coverageReason: form.coverageReason,
+        responseNumbers: cleanedNumbers,
+        responseEmails: cleanedEmails,
+        password,
       };
-      console.log('Institution signup payload:', payload);
-      toast('Account created successfully');
-      // TODO: router.push('/signin') once the backend persists the record.
+
+      const res = await fetch(`${API_URL}/institutions/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast(data.error || 'Failed to create account', { variant: 'error' });
+        return;
+      }
+
+      // Move to OTP step instead of jumping to login
+      setPendingEmail(cleanedEmails[0]);
+      setView('otp');
+      toast('Verification code sent');
     } catch (err) {
       console.error(err);
-      toast('Something went wrong', { variant: 'error' });
+      toast('Network error. Is the server running?', { variant: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -109,11 +210,27 @@ export default function InstitutionForm({ onBack }) {
   if (view === 'coverage') {
     return (
       <InstitutionCoverageEditor
-        center={{ lat: form.addressLat, lng: form.addressLng }}
+        center={{
+          lat: form.centerLat ?? form.addressLat,
+          lng: form.centerLng ?? form.addressLng,
+        }}
         polygon={form.coveragePolygon || []}
+        institution={{
+          name: form.name,
+          type: form.type,
+          country: form.country,
+          address: form.address,
+        }}
         onCancel={() => setView('review')}
-        onSave={(newPath) => {
-          setForm((f) => ({ ...f, coveragePolygon: newPath }));
+        onSave={({ center, polygon, radius_m, reason }) => {
+          setForm((f) => ({
+            ...f,
+            centerLat: center?.lat ?? f.centerLat,
+            centerLng: center?.lng ?? f.centerLng,
+            coveragePolygon: polygon,
+            coverageRadiusM: radius_m ?? f.coverageRadiusM,
+            coverageReason: reason ?? f.coverageReason,
+          }));
           setView('review');
         }}
       />
@@ -126,9 +243,57 @@ export default function InstitutionForm({ onBack }) {
         form={form}
         onBack={() => setView('form')}
         onEdit={() => setView('coverage')}
-        onConfirm={handleConfirm}
+        onConfirm={handleCoverageConfirm}
         submitting={submitting}
       />
+    );
+  }
+
+  if (view === 'password') {
+    return (
+      <InstitutionPassword
+        onBack={() => setView('review')}
+        onSubmit={handleFinalSubmit}
+        submitting={submitting}
+      />
+    );
+  }
+
+  if (view === 'otp') {
+    return (
+      <div className="flex h-full items-start justify-center overflow-y-auto px-6 py-8">
+        <div className="w-full max-w-md">
+          <h1 className="text-2xl font-extrabold text-slate-900">
+            Verify your email
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Enter the 6-digit code we just sent to your response email.
+          </p>
+          <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+            <OtpVerifyForm
+              role="institution"
+              email={pendingEmail}
+              purpose="signup"
+              submitLabel="Verify & continue"
+              submit={({ code }) =>
+                fetch(`${API_URL}/auth/verify-otp`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    role: 'institution',
+                    email: pendingEmail,
+                    code,
+                  }),
+                })
+              }
+              onSuccess={() => {
+                toast('Email verified');
+                router.push('/signin?tab=institution');
+              }}
+            />
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -138,15 +303,32 @@ export default function InstitutionForm({ onBack }) {
       onBack={onBack}
       onSubmit={handleSubmit}
     >
-      <Field label="Name of institution">
-        <input
-          type="text"
-          value={form.name}
-          onChange={update('name')}
-          required
-          className={inputClass}
-        />
-      </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Name of institution">
+          <input
+            type="text"
+            value={form.name}
+            onChange={update('name')}
+            required
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Type">
+          <select
+            value={form.type}
+            onChange={update('type')}
+            required
+            className={inputClass}
+          >
+            <option value="">Select type…</option>
+            {INSTITUTION_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Year established">
@@ -258,7 +440,10 @@ export default function InstitutionForm({ onBack }) {
       {/* Response emails */}
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-700">
-          Response email(s)
+          Response email(s){' '}
+          <span className="font-normal text-slate-400">
+            — first is your login username
+          </span>
         </label>
         <div className="space-y-2">
           {responseEmails.map((email, idx) => (
@@ -267,7 +452,10 @@ export default function InstitutionForm({ onBack }) {
                 type="email"
                 value={email}
                 onChange={(e) => updateEmail(idx, e.target.value)}
-                placeholder="response@example.org"
+                placeholder={
+                  idx === 0 ? 'login@example.org (username)' : 'response@example.org'
+                }
+                required={idx === 0}
                 className={inputClass}
               />
               {responseEmails.length > 1 && (

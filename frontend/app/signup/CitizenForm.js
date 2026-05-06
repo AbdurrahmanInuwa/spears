@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import FormShell, { Field, inputClass } from './FormShell';
 import { useToast } from '../components/Toast';
+import { getCountries, getDialCode } from '../lib/countries';
+import OtpVerifyForm from '../components/OtpVerifyForm';
+import { API_URL as SHARED_API_URL } from '../lib/api';
 
 const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const RAW = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -16,12 +19,15 @@ export default function CitizenForm({ onBack }) {
   const router = useRouter();
   const toast = useToast();
 
+  const countries = useMemo(() => getCountries(), []);
+  const [pendingEmail, setPendingEmail] = useState(null);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
     dob: '',
     email: '',
     phone: '',
+    country: '',
     hasAllergies: false,
     allergies: '',
     bloodGroup: '',
@@ -63,6 +69,7 @@ export default function CitizenForm({ onBack }) {
           dob: form.dob,
           email: form.email,
           phone: form.phone,
+          country: form.country || null,
           bloodGroup: form.bloodGroup || null,
           hasAllergies: form.hasAllergies,
           allergies: form.allergies,
@@ -80,14 +87,53 @@ export default function CitizenForm({ onBack }) {
         return;
       }
 
-      toast('Account created successfully');
-      router.push('/signin');
+      // Show OTP step instead of redirecting straight to login
+      setPendingEmail(form.email.trim().toLowerCase());
+      toast('Verification code sent');
     } catch (err) {
       console.error(err);
       toast('Network error. Is the server running?', { variant: 'error' });
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (pendingEmail) {
+    return (
+      <div className="flex h-full items-start justify-center overflow-y-auto px-6 py-8">
+        <div className="w-full max-w-md">
+          <h1 className="text-2xl font-extrabold text-slate-900">
+            Verify your email
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Almost done — enter the 6-digit code we just emailed you.
+          </p>
+          <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+            <OtpVerifyForm
+              role="citizen"
+              email={pendingEmail}
+              purpose="signup"
+              submitLabel="Verify & continue"
+              submit={({ code }) =>
+                fetch(`${SHARED_API_URL}/auth/verify-otp`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    role: 'citizen',
+                    email: pendingEmail,
+                    code,
+                  }),
+                })
+              }
+              onSuccess={() => {
+                toast('Email verified');
+                router.push('/signin?tab=citizen');
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -135,15 +181,47 @@ export default function CitizenForm({ onBack }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="Phone number">
-          <input
-            type="tel"
-            value={form.phone}
-            onChange={update('phone')}
+        <Field label="Country">
+          <select
+            value={form.country}
+            onChange={update('country')}
             required
             className={inputClass}
-          />
+          >
+            <option value="">Select country…</option>
+            {countries.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </Field>
+        <Field label="Phone number">
+          {(() => {
+            const dialCode = getDialCode(form.country);
+            return (
+              <div className="flex items-stretch overflow-hidden rounded-md border border-slate-300 bg-white focus-within:border-brand focus-within:ring-1 focus-within:ring-brand">
+                {dialCode && (
+                  <span className="flex items-center border-r border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600">
+                    +{dialCode}
+                  </span>
+                )}
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={update('phone')}
+                  placeholder={dialCode ? '700 000 000' : 'Select a country first'}
+                  disabled={!dialCode}
+                  required
+                  className="w-full bg-transparent px-3 py-2 text-sm text-slate-900 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                />
+              </div>
+            );
+          })()}
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Blood group">
           <select
             value={form.bloodGroup}

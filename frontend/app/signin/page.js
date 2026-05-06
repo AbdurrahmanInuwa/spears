@@ -1,19 +1,135 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { useToast } from '../components/Toast';
+import { API_URL, apiFetch } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import OtpVerifyForm from '../components/OtpVerifyForm';
 
 const tabs = ['Citizen', 'Institution'];
 
+function tabFromParam(value) {
+  if (!value) return 'Citizen';
+  const v = String(value).toLowerCase();
+  if (v === 'institution' || v === 'institutions') return 'Institution';
+  if (v === 'citizen' || v === 'citizens') return 'Citizen';
+  return 'Citizen';
+}
+
 export default function SignInPage() {
-  const [activeTab, setActiveTab] = useState('Citizen');
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center text-sm text-slate-500">
+          Loading…
+        </div>
+      }
+    >
+      <SignInPageInner />
+    </Suspense>
+  );
+}
+
+function SignInPageInner() {
+  const router = useRouter();
+  const toast = useToast();
+  const { refresh } = useAuth();
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() =>
+    tabFromParam(searchParams.get('tab'))
+  );
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  // 2FA state — set when /login returns { pending2FA: true }
+  const [pending2FA, setPending2FA] = useState(null); // { role, email }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    // Hook into backend later
-    console.log('Login:', { role: activeTab, username, password });
+    setSubmitting(true);
+    try {
+      const role = activeTab.toLowerCase(); // 'citizen' | 'institution'
+      const res = await apiFetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, email: username, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 202 && data.pending2FA) {
+        setPending2FA({ role: data.role, email: username.trim().toLowerCase() });
+        toast('Verification code sent');
+        return;
+      }
+      if (!res.ok) {
+        toast(data.error || 'Login failed', { variant: 'error' });
+        return;
+      }
+      // Single-factor success — server set the cookie, hydrate context
+      await refresh();
+      toast(
+        `Welcome back, ${data.user?.firstName || data.user?.name || ''}`.trim()
+      );
+      if (data.role === 'citizen') router.push('/dashboard');
+      else router.push('/institution');
+    } catch (err) {
+      console.error(err);
+      toast('Network error. Is the server running?', { variant: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (pending2FA) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 py-8">
+        <div className="w-full max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+          <div className="border-b border-slate-200 px-6 py-4">
+            <h1 className="text-base font-bold text-slate-900">
+              Two-factor sign-in
+            </h1>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Enter the 6-digit code we sent to{' '}
+              <span className="font-semibold text-slate-700">{pending2FA.email}</span>.
+            </p>
+          </div>
+          <div className="p-6">
+            <OtpVerifyForm
+              role={pending2FA.role}
+              email={pending2FA.email}
+              purpose="login_2fa"
+              submitLabel="Sign in"
+              submit={({ code }) =>
+                apiFetch('/auth/verify-login-otp', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    role: pending2FA.role,
+                    email: pending2FA.email,
+                    code,
+                  }),
+                })
+              }
+              onSuccess={async () => {
+                await refresh();
+                toast('Welcome back');
+                if (pending2FA.role === 'citizen') router.push('/dashboard');
+                else router.push('/institution');
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setPending2FA(null)}
+              className="mt-3 w-full text-center text-xs font-semibold text-slate-500 hover:text-brand"
+            >
+              ← Back to sign in
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -80,9 +196,10 @@ export default function SignInPage() {
 
           <button
             type="submit"
-            className="w-full rounded-md bg-brand px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-brand-dark"
+            disabled={submitting}
+            className="w-full rounded-md bg-brand px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-70"
           >
-            Login
+            {submitting ? 'Signing in…' : 'Login'}
           </button>
 
           <p className="pt-2 text-center text-xs text-slate-600">
@@ -92,6 +209,14 @@ export default function SignInPage() {
               className="font-semibold text-brand hover:underline"
             >
               Create account now
+            </Link>
+          </p>
+          <p className="text-center text-xs text-slate-500">
+            <Link
+              href={`/forgot-password?tab=${activeTab.toLowerCase()}`}
+              className="hover:text-brand hover:underline"
+            >
+              Forgot password?
             </Link>
           </p>
         </form>

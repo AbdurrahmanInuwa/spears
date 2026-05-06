@@ -9,18 +9,163 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Family {
+  id        String    @id @default(uuid())
+  creatorId String?   // citizen id who first started the family
+  createdAt DateTime  @default(now())
+  members   Citizen[]
+}
+
+model Volunteer {
+  id              String   @id @default(uuid())
+  citizenId       String
+  citizen         Citizen  @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+  field           String   // e.g. "Medical / First Aid"
+  idFileName      String?  // original filename of uploaded govt-id
+  idFileKey       String?  // S3 object key for the uploaded govt-id
+  status          String   @default("pending") // 'pending' | 'approved' | 'revoked'
+  decisionNote    String?
+  decidedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([citizenId])
+  @@index([status])
+}
+
 model Citizen {
   id               String   @id @default(uuid())
+  spaersId         String?  @unique
   firstName        String
   lastName         String
   dob              DateTime
   email            String   @unique
   phone            String
+  country          String?  // ISO 3166-1 alpha-2 (e.g. 'KE', 'NG', 'US')
   bloodGroup       String?
   allergies        String?
   chronicCondition String?
   implantDevice    Boolean  @default(false)
   passwordHash     String
+  emailVerifiedAt  DateTime?
+  twoFactorEnabled Boolean  @default(false)
+  avatarKey        String?  // S3 object key for the citizen's profile photo
+  familyId         String?
+  family           Family?  @relation(fields: [familyId], references: [id])
+  familyAckAt      DateTime?
+  // When the creator marks this member call-eligible, they receive a voice
+  // call on top of SMS + email when any family member triggers an SOS.
+  // Backend enforces a max of 2 per family at write time.
+  familyCallEligible Boolean @default(false)
+  emergencies      Emergency[]
+  volunteer        Volunteer?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+}
+
+model Emergency {
+  id              String           @id @default(uuid())
+  citizenId       String?
+  citizen         Citizen?         @relation(fields: [citizenId], references: [id])
+  type            String           // 'Shooting' | 'Medical' | 'Assault' | 'Fire' | 'Flooding'
+  victimLat       Float
+  victimLng       Float
+  status          String           @default("active") // 'active' | 'dispatched' | 'resolved' | 'cancelled'
+  notes           String?
+  createdAt       DateTime         @default(now())
+  resolvedAt      DateTime?
+  notifications   EmergencyNotification[]
+  tokens          EmergencyToken[]
+  dispatches      EmergencyDispatch[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Hashed single-use tokens that grant access to the public /e and /d pages
+// without authentication. Each token is bound to an Emergency, an audience
+// (institution or dispatcher), and either consumed or expired.
+model EmergencyToken {
+  id              String     @id @default(uuid())
+  emergencyId     String
+  emergency       Emergency  @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  // 'institution' | 'dispatcher'
+  audience        String
+  // For audience=institution: institution.id; for audience=dispatcher: dispatcher.id
+  audienceId      String
+  tokenHash       String     @unique // sha256(plain token)
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdAt       DateTime   @default(now())
+
+  @@index([audience, audienceId])
+}
+
+// Audit log of every notification we tried to send (Twilio call / SMS / email)
+model EmergencyNotification {
+  id              String     @id @default(uuid())
+  emergencyId     String
+  emergency       Emergency  @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  channel         String     // 'voice' | 'sms' | 'email'
+  recipient       String     // phone or email
+  audience        String     // 'institution' | 'dispatcher'
+  audienceId      String
+  status          String     @default("queued") // 'queued' | 'sent' | 'failed'
+  payload         Json?
+  createdAt       DateTime   @default(now())
+}
+
+// One row per institution-side dispatch action — i.e. the institution
+// responder picked a dispatcher and sent them.
+model EmergencyDispatch {
+  id              String     @id @default(uuid())
+  emergencyId     String
+  emergency       Emergency  @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  institutionId   String
+  institution     Institution @relation(fields: [institutionId], references: [id])
+  dispatcherId    String
+  dispatcher      Dispatcher @relation(fields: [dispatcherId], references: [id])
+  startedAt       DateTime?  // when the dispatcher tapped "Start"
+  arrivedAt       DateTime?  // future
+  createdAt       DateTime   @default(now())
+}
+
+model Dispatcher {
+  id            String      @id @default(uuid())
+  dispatcherId  String      @unique // human-readable, system-assigned (e.g. DSP-1234)
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  name          String
+  emails        String[]
+  phones        String[]
+  mode          String      // 'vehicle' | 'motorcycle' | 'foot'
+  dispatches    EmergencyDispatch[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model Institution {
+  id              String   @id @default(uuid())
+  name            String
+  type            String
+  yearEstablished Int?
+  country         String   // ISO 3166-1 alpha-2
+  address         String
+  addressLat      Float?
+  addressLng      Float?
+  addressPlaceId  String?
+  centerLat       Float
+  centerLng       Float
+  coveragePolygon Json     // Array<{lat, lng}>
+  coverageReason  String?
+  responseNumbers String[] // E.164 formatted (e.g. +254700000000)
+  responseEmails  String[] // first one is the canonical login email
+  email           String   @unique // = responseEmails[0], used for login
+  passwordHash    String
+  emailVerifiedAt DateTime?
+  twoFactorEnabled Boolean @default(false)
+  dispatchers     Dispatcher[]
+  dispatches      EmergencyDispatch[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

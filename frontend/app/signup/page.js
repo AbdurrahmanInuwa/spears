@@ -17,7 +17,7 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center px-6 py-8">
+    <div className="flex h-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
       <div className="w-full max-w-2xl">
         <h1 className="text-center text-3xl font-extrabold text-slate-900">
           Create Account

@@ -67,3 +67,22 @@ html, body {
 .pac-matched {
   font-weight: 700;
 }
+
+/* ───── SOS button pulsing ring ───── */
+@keyframes sos-pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+.sos-ring {
+  animation: sos-pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.sos-ring-delay {
+  animation: sos-pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  animation-delay: 1s;
+}

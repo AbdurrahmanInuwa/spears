@@ -1,7 +1,7 @@
 export default function IntegrationPage() {
   return (
-    <div className="mx-auto max-w-7xl px-6 py-16">
-      <div className="grid grid-cols-1 items-center gap-16 md:grid-cols-12">
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-16">
+      <div className="grid grid-cols-1 items-center gap-10 sm:gap-16 md:grid-cols-12">
         {/* Left: editorial-style copy */}
         <div className="md:col-span-7">
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">

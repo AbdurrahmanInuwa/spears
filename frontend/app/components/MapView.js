@@ -20,6 +20,8 @@ export default function MapView({
   zoom = 14,
   mapTypeId, // 'roadmap' | 'satellite' | 'hybrid' | 'terrain'
   marker = true,
+  onMapLoad, // (map) => void — called once GoogleMap mounts; capture for panTo / setZoom
+  children, // Additional overlays (e.g. <Polygon>, <Circle>) rendered inside the map
 }) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -57,6 +59,7 @@ export default function MapView({
       mapContainerStyle={containerStyle}
       center={mapCenter}
       zoom={zoom}
+      onLoad={onMapLoad}
       options={{
         disableDefaultUI: true,
         zoomControl: true,
@@ -65,6 +68,7 @@ export default function MapView({
       }}
     >
       {marker && <Marker position={mapCenter} />}
+      {children}
     </GoogleMap>
   );
 }
