@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 import { useInstitution } from '../InstitutionContext';
 import { useAuth } from '../../lib/auth';
 import { useToast } from '../../components/Toast';
-import { apiFetch } from '../../lib/api';
+import { API_URL, apiFetch } from '../../lib/api';
 import { pinForType, pinIcon, SEMANTIC_COLOR } from '../../lib/mapPins';
 import VictimCard from '../../components/VictimCard';
 import { getSocket } from '../../lib/socket';
