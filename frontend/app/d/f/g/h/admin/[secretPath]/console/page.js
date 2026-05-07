@@ -3,8 +3,8 @@
 import { notFound, useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { API_URL } from '../../../../../../../lib/api';
-import MobileDrawer from '../../../../../../components/MobileDrawer';
-import MobileTopBar from '../../../../../../components/MobileTopBar';
+import MobileDrawer from '../../../../../../../components/MobileDrawer';
+import MobileTopBar from '../../../../../../../components/MobileTopBar';
 
 const ADMIN_PATH = process.env.NEXT_PUBLIC_ADMIN_PATH;
 const TOKEN_KEY = 'spaers_admin_token_v1';
