@@ -158,9 +158,11 @@ export default function HomePage() {
               <p className="font-medium text-slate-700">
                 {placeName
                   ? `You are in ${placeName}`
-                  : geoError
-                    ? 'Location unavailable'
-                    : 'Locating you…'}
+                  : location
+                    ? 'Locating you…'
+                    : geoError
+                      ? 'Location unavailable'
+                      : 'Enable location to see your area'}
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 {geoError
@@ -173,7 +175,11 @@ export default function HomePage() {
 
             <div className="relative">
               <InfoCard title="Nearby Help Summary">
-                {!nearbySummary ? (
+                {!location ? (
+                  <p className="text-slate-500">
+                    Enable location to see nearby help.
+                  </p>
+                ) : !nearbySummary ? (
                   <p className="text-slate-500">Checking your area…</p>
                 ) : (
                   <ul className="space-y-1">
@@ -257,7 +263,11 @@ export default function HomePage() {
           {/* Right column: Safety + Quick Action */}
           <div className="col-span-12 flex h-full md:max-h-[540px] flex-col justify-between gap-4 self-center md:col-span-3">
             <InfoCard title="Safety Status">
-              {!activeNearby ? (
+              {!location ? (
+                <p className="text-slate-500">
+                  Enable location to check your area.
+                </p>
+              ) : !activeNearby ? (
                 <p className="text-slate-500">Checking your area…</p>
               ) : activeNearby.count === 0 ? (
                 <>
