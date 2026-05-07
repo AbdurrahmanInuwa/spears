@@ -32,9 +32,9 @@ export default function NearbyHelpModal({ open, onClose, summary }) {
         </div>
 
         {!summary ? (
-          <p className="text-xs text-slate-500">Checking your area…</p>
+          <p className="text-sm text-slate-600">Checking your area…</p>
         ) : list.length === 0 ? (
-          <p className="text-xs text-slate-500">
+          <p className="text-sm text-slate-600">
             No registered responders within 15&nbsp;km.
           </p>
         ) : (
