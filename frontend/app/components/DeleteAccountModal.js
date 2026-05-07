@@ -59,35 +59,58 @@ export default function DeleteAccountModal({ onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-lg border border-rose-200 bg-white shadow-2xl">
-        <div className="flex items-start justify-between border-b border-rose-100 bg-rose-50 px-5 py-4">
-          <div>
-            <h3 className="text-base font-bold text-rose-700">Delete account</h3>
-            <p className="mt-0.5 text-xs text-rose-600/80">
-              This permanently removes your account and cannot be undone.
-            </p>
+        <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <span
+              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600"
+              aria-hidden="true"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              </svg>
+            </span>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Delete account</h3>
+              <p className="mt-0.5 text-xs text-slate-600">
+                This permanently removes your account and cannot be undone.
+              </p>
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
             aria-label="Close"
-            className="text-rose-400 hover:text-rose-700 disabled:opacity-50"
+            className="text-slate-400 hover:text-slate-700 disabled:opacity-50"
           >
             ✕
           </button>
         </div>
 
         <form onSubmit={handleDelete} className="space-y-4 px-5 py-5">
-          <div className="rounded-md border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-800">
-            <p className="font-semibold">You will lose:</p>
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            <p className="font-semibold text-slate-900">You will lose:</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
               <li>Your SPAERS ID and medical profile</li>
-              <li>Family membership (if you created the family, it transfers
-                to another member)</li>
+              <li>
+                Family membership (if you created the family, it transfers to
+                another member)
+              </li>
               <li>Volunteer status, if any</li>
               <li>Profile photo</li>
             </ul>
-            <p className="mt-2">
+            <p className="mt-2 text-slate-500">
               Past emergency records are kept anonymously for audit purposes.
             </p>
           </div>
