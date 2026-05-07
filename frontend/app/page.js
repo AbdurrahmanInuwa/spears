@@ -30,29 +30,35 @@ export default function HomePage() {
   const { isLoaded } = useJsApiLoader(googleMapsLoaderOptions);
   const placeFetchedRef = useRef(false);
 
-  // 1. Geolocate
-  useEffect(() => {
+  // 1. Geolocate — only when the user clicks "Enable location" (we don't
+  // ask for permission on page load).
+  const [requesting, setRequesting] = useState(false);
+  function requestLocation() {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGeoError('Geolocation not supported');
+      setGeoError('Geolocation not supported by this browser');
       return;
     }
+    setRequesting(true);
+    setGeoError(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setAccuracyM(Math.round(pos.coords.accuracy));
         setGeoError(null);
+        setRequesting(false);
       },
       (err) => {
         console.warn('geolocation denied:', err);
         setGeoError(
           err?.code === 1
-            ? 'Location permission denied'
+            ? 'Location permission denied. Enable it in your browser settings.'
             : 'Could not get your location'
         );
+        setRequesting(false);
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
-  }, []);
+  }
 
   // 2. Reverse-geocode + AI place name (with localStorage cache)
   useEffect(() => {
@@ -201,10 +207,50 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Center: map */}
+          {/* Center: map (or "enable location" prompt before permission) */}
           <div className="order-first col-span-12 flex items-center justify-center md:order-none md:col-span-6">
-            <div className="h-[300px] w-full max-w-[680px] overflow-hidden rounded-2xl border border-slate-200 shadow-md sm:h-[400px] md:h-[540px]">
-              <MapView center={location} zoom={location ? 15 : 11} />
+            <div className="h-[300px] w-full max-w-[680px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-md sm:h-[400px] md:h-[540px]">
+              {location ? (
+                <MapView center={location} zoom={15} />
+              ) : (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center">
+                  <svg
+                    width="48"
+                    height="48"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-slate-300"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  <p className="text-sm font-semibold text-slate-700">
+                    Please enable location
+                  </p>
+                  <p className="max-w-xs text-xs text-slate-500">
+                    SPAERS uses your location to show nearby help and find
+                    responders quickly when you trigger an SOS.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={requestLocation}
+                    disabled={requesting}
+                    className="mt-1 rounded-md bg-brand px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {requesting ? 'Requesting…' : 'Enable location'}
+                  </button>
+                  {geoError && (
+                    <p className="mt-1 max-w-xs rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-800 ring-1 ring-amber-200">
+                      {geoError}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
