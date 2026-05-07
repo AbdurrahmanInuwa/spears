@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const cookie = require('cookie');
 const prisma = require('./prisma');
 const session = require('./session');
+const { resolveToken } = require('./tokens');
 const { pointInPolygon } = require('./geometry');
 
 let io = null;
@@ -33,6 +34,22 @@ function init(httpServer) {
         if (!emergencyId || !scope) {
           return ack?.({ error: 'emergencyId and scope required' });
         }
+
+        // Anonymous victims have no cookie — auth is the localStorage
+        // EmergencyToken instead. Branch out before the cookie check.
+        if (scope === 'anon') {
+          const tok = await resolveToken(prisma, payload.victimToken);
+          if (!tok || tok._invalidReason) {
+            return ack?.({ error: 'Invalid token' });
+          }
+          if (tok.audience !== 'victim' || tok.emergencyId !== emergencyId) {
+            return ack?.({ error: 'Forbidden' });
+          }
+          const room = roomKey(emergencyId);
+          socket.join(room);
+          return ack?.({ ok: true });
+        }
+
         const sess = await readCookieSession(socket);
         if (!sess) return ack?.({ error: 'Unauthorized' });
 

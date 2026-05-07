@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const session = require('../lib/session');
+const redis = require('../lib/redis');
 const { pointInPolygon } = require('../lib/geometry');
 
 // Backend haversine — keep here so we don't depend on the frontend's lib
@@ -16,7 +17,7 @@ function haversineMeters(p1, p2) {
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-const { issueToken } = require('../lib/tokens');
+const { issueToken, resolveToken } = require('../lib/tokens');
 const {
   notifyInstitution,
   notifyFamilyMembers,
@@ -221,6 +222,258 @@ router.get('/active-nearby', async (req, res) => {
     res.json({ count: nearby.length, emergencies: nearby });
   } catch (err) {
     console.error('Active-nearby error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Anonymous SOS — no login required ─────────────────────────────────
+//
+// Rules:
+//   - Per-IP rate limit: 1 / 60s, 5 / hour (Redis-backed)
+//   - No volunteer fan-out (institutions only)
+//   - All identity defaults to "Anonymous" — the citizenId column stays
+//     null and the institution UI's existing null-citizen path renders the
+//     fallback card.
+//   - The user's browser holds a `victim` audience EmergencyToken in
+//     localStorage; that token gates the GET status and POST cancel
+//     endpoints below.
+//   - Anonymous emergencies that stay 'active' for > 4h are lazily
+//     transitioned to 'expired' on next read — keeps abandoned reports
+//     out of dispatcher feeds without needing a cron job.
+
+const ANON_SOS_TYPES = new Set([
+  'Shooting',
+  'Medical',
+  'Assault',
+  'Fire',
+  'Flooding',
+]);
+const ANON_LIFETIME_MS = 4 * 60 * 60 * 1000; // 4h
+
+// Returns null on success or { status, body } if rate-limited.
+async function checkAnonRateLimit(ip) {
+  if (!ip) ip = 'unknown';
+  // 1 per 60 seconds
+  const mKey = `anon_sos:rl:m:${ip}`;
+  const mCount = await redis.incr(mKey);
+  if (mCount === 1) await redis.expire(mKey, 60);
+  if (mCount > 1) {
+    return {
+      status: 429,
+      body: {
+        error: "You just sent an SOS. Wait a minute before sending another.",
+      },
+    };
+  }
+  // 5 per hour
+  const hKey = `anon_sos:rl:h:${ip}`;
+  const hCount = await redis.incr(hKey);
+  if (hCount === 1) await redis.expire(hKey, 3600);
+  if (hCount > 5) {
+    return {
+      status: 429,
+      body: { error: 'Hourly SOS limit reached. Please contact emergency services directly.' },
+    };
+  }
+  return null;
+}
+
+async function lazyExpireIfStale(emergency) {
+  if (!emergency) return emergency;
+  if (emergency.citizenId) return emergency; // only anonymous gets lazy-expired
+  if (emergency.status !== 'active' && emergency.status !== 'dispatched') {
+    return emergency;
+  }
+  const ageMs = Date.now() - new Date(emergency.createdAt).getTime();
+  if (ageMs <= ANON_LIFETIME_MS) return emergency;
+  return prisma.emergency.update({
+    where: { id: emergency.id },
+    data: { status: 'expired' },
+  });
+}
+
+// POST /api/emergencies/anonymous
+// Body: { type, lat, lng }
+// Returns: { emergencyId, victimToken, expiresAt }
+router.post('/anonymous', async (req, res) => {
+  try {
+    const limited = await checkAnonRateLimit(req.ip);
+    if (limited) return res.status(limited.status).json(limited.body);
+
+    const { type, lat, lng } = req.body || {};
+    if (!ANON_SOS_TYPES.has(String(type))) {
+      return res.status(400).json({ error: 'Invalid emergency type' });
+    }
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'lat and lng required' });
+    }
+
+    const emergency = await prisma.emergency.create({
+      data: {
+        citizenId: null,
+        type: String(type),
+        victimLat: lat,
+        victimLng: lng,
+        status: 'active',
+        notes: 'Anonymous SOS (no login)',
+      },
+    });
+
+    // Mint the victim-audience token. Lifetime matches ANON_LIFETIME_MS so
+    // an abandoned localStorage entry can't be reused after expiry.
+    const victimToken = await issueToken(prisma, {
+      emergencyId: emergency.id,
+      audience: 'victim',
+      audienceId: emergency.id, // self-referential — no separate audience entity
+      ttlMs: ANON_LIFETIME_MS,
+    });
+
+    // Fan out to matching institutions only (no volunteers, no family).
+    const institutions = await prisma.institution.findMany({
+      select: {
+        id: true,
+        name: true,
+        responseNumbers: true,
+        responseEmails: true,
+        coveragePolygon: true,
+      },
+    });
+    const matched = institutions.filter((inst) =>
+      pointInPolygon({ lat, lng }, inst.coveragePolygon || [])
+    );
+
+    // Same broadcast shape as the citizen flow so institution dashboards
+    // can render the row without refetching. citizen will be null.
+    const broadcastable = await prisma.emergency.findUnique({
+      where: { id: emergency.id },
+      include: {
+        citizen: {
+          select: {
+            spaersId: true,
+            firstName: true,
+            lastName: true,
+            dob: true,
+            email: true,
+            phone: true,
+            country: true,
+            bloodGroup: true,
+            allergies: true,
+            chronicCondition: true,
+            implantDevice: true,
+          },
+        },
+        dispatches: { take: 0 },
+      },
+    });
+
+    for (const inst of matched) {
+      const token = await issueToken(prisma, {
+        emergencyId: emergency.id,
+        audience: 'institution',
+        audienceId: inst.id,
+      });
+      notifyInstitution({ emergency, institution: inst, token }).catch((err) =>
+        console.error('notifyInstitution(anon) error:', err)
+      );
+      realtime.emitInstitutionEmergencyCreated(inst.id, broadcastable);
+    }
+
+    res.status(201).json({
+      emergencyId: emergency.id,
+      victimToken,
+      type: emergency.type,
+      victimLat: emergency.victimLat,
+      victimLng: emergency.victimLng,
+      createdAt: emergency.createdAt,
+      expiresAt: new Date(Date.now() + ANON_LIFETIME_MS),
+      notifiedInstitutions: matched.length,
+    });
+  } catch (err) {
+    console.error('Anonymous SOS create error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/emergencies/anonymous/:token
+// Returns the live state of the emergency for the victim's overlay.
+router.get('/anonymous/:token', async (req, res) => {
+  try {
+    const t = await resolveToken(prisma, req.params.token);
+    if (!t || t._invalidReason) {
+      return res
+        .status(404)
+        .json({ error: t?._invalidReason || 'Invalid token' });
+    }
+    if (t.audience !== 'victim') {
+      return res.status(403).json({ error: 'Wrong audience' });
+    }
+    let emergency = await prisma.emergency.findUnique({
+      where: { id: t.emergencyId },
+      include: {
+        dispatches: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            dispatcher: { select: { name: true, dispatcherId: true } },
+            institution: { select: { id: true, name: true, type: true } },
+          },
+        },
+      },
+    });
+    if (!emergency) return res.status(404).json({ error: 'Not found' });
+    emergency = await lazyExpireIfStale(emergency);
+    res.json({ emergency });
+  } catch (err) {
+    console.error('Anonymous SOS get error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/emergencies/anonymous/:token/cancel
+// User clicked Cancel in the overlay. We move status to 'cancelled' and
+// fan out a socket event to dispatchers (if any are en route) and to all
+// institutions that had this row in their feed.
+router.post('/anonymous/:token/cancel', async (req, res) => {
+  try {
+    const t = await resolveToken(prisma, req.params.token);
+    if (!t || t._invalidReason) {
+      return res
+        .status(404)
+        .json({ error: t?._invalidReason || 'Invalid token' });
+    }
+    if (t.audience !== 'victim') {
+      return res.status(403).json({ error: 'Wrong audience' });
+    }
+    const emergency = await prisma.emergency.findUnique({
+      where: { id: t.emergencyId },
+    });
+    if (!emergency) return res.status(404).json({ error: 'Not found' });
+    if (emergency.status === 'resolved' || emergency.status === 'cancelled') {
+      // Already terminal — return success so the client clears localStorage.
+      return res.json({ ok: true, status: emergency.status });
+    }
+    const updated = await prisma.emergency.update({
+      where: { id: emergency.id },
+      data: { status: 'cancelled', resolvedAt: new Date() },
+    });
+
+    // Broadcast: drop pin from institution feeds, tell dispatchers en route
+    // they can stand down. We reuse the existing 'emergency:resolved' event
+    // (institutions already react to it by removing the row) and add a
+    // dedicated 'emergency:cancelled' for nuance on the dispatcher side.
+    const dispatchInstitutions = await prisma.emergencyDispatch.findMany({
+      where: { emergencyId: emergency.id },
+      select: { institutionId: true },
+    });
+    const institutionIds = [
+      ...new Set(dispatchInstitutions.map((d) => d.institutionId)),
+    ];
+    realtime.emitEmergencyResolved(emergency.id, institutionIds);
+    redis.del(`emergency_pos:${emergency.id}`).catch(() => {});
+
+    res.json({ ok: true, status: updated.status });
+  } catch (err) {
+    console.error('Anonymous SOS cancel error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

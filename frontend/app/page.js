@@ -7,10 +7,46 @@ import MapView from './components/MapView';
 import InfoCard from './components/InfoCard';
 import SOSButton from './components/SOSButton';
 import NearbyHelpModal from './components/NearbyHelpModal';
+import AnonymousEmergencyOverlay from './components/AnonymousEmergencyOverlay';
 import { googleMapsLoaderOptions } from './lib/googleMaps';
 import { API_URL } from './lib/api';
 
 const PLACE_NAME_CACHE_KEY = 'spaers_place_name_cache_v1';
+const ANON_SOS_STORAGE_KEY = 'spaers_anon_sos_v1';
+
+// Helpers to persist the anonymous SOS across tab close, browser restart,
+// navigation back to /. The overlay reads from this on mount so the user
+// returns straight to the live map.
+function loadAnonSOS() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(ANON_SOS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Hard expiry guard — backend issues a 4h token, so anything older
+    // than that is server-side dead anyway.
+    if (parsed.expiresAt && new Date(parsed.expiresAt) < new Date()) {
+      window.localStorage.removeItem(ANON_SOS_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function saveAnonSOS(payload) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (payload) {
+      window.localStorage.setItem(
+        ANON_SOS_STORAGE_KEY,
+        JSON.stringify(payload)
+      );
+    } else {
+      window.localStorage.removeItem(ANON_SOS_STORAGE_KEY);
+    }
+  } catch {}
+}
 
 function formatDistance(m) {
   if (m == null || !Number.isFinite(m)) return '—';
@@ -26,6 +62,26 @@ export default function HomePage() {
   const [placeName, setPlaceName] = useState(null);
   const [activeNearby, setActiveNearby] = useState(null); // { count, emergencies }
   const [nearbySummary, setNearbySummary] = useState(null);
+  // Anonymous SOS persistence — survives tab close, navigation, browser
+  // restart. Cleared only when the emergency reaches a terminal state
+  // (resolved/cancelled/expired) or the user clicks Cancel in the overlay.
+  const [activeSOS, setActiveSOS] = useState(null);
+
+  // Rehydrate any active anonymous SOS on mount. We do this in useEffect
+  // (not the initializer) to avoid SSR hydration mismatches.
+  useEffect(() => {
+    const restored = loadAnonSOS();
+    if (restored) setActiveSOS(restored);
+  }, []);
+
+  function handleSOSTriggered(payload) {
+    saveAnonSOS(payload);
+    setActiveSOS(payload);
+  }
+  function handleSOSCleared() {
+    saveAnonSOS(null);
+    setActiveSOS(null);
+  }
 
   const { isLoaded } = useJsApiLoader(googleMapsLoaderOptions);
   const placeFetchedRef = useRef(false);
@@ -223,6 +279,19 @@ export default function HomePage() {
     };
   }, [location]);
 
+  // Active-SOS short-circuit: while the user has an open anonymous SOS,
+  // the home content is replaced entirely by the live emergency overlay.
+  // This persists across navigation/refresh because activeSOS rehydrates
+  // from localStorage on mount.
+  if (activeSOS) {
+    return (
+      <AnonymousEmergencyOverlay
+        active={activeSOS}
+        onClear={handleSOSCleared}
+      />
+    );
+  }
+
   return (
     <div className="h-full">
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 md:justify-center md:py-4">
@@ -375,7 +444,7 @@ export default function HomePage() {
               <p className="mb-3 text-xs text-slate-500">
                 Tap SOS to alert responders.
               </p>
-              <SOSButton />
+              <SOSButton location={location} onTriggered={handleSOSTriggered} />
             </InfoCard>
           </div>
         </div>
