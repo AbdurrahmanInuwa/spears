@@ -149,18 +149,17 @@ router.get('/nearby-summary', async (req, res) => {
 
     const byType = {};
     for (const i of within) byType[i.type] = (byType[i.type] || 0) + 1;
-    const nearestHospital = within.find(
-      (i) => /hospital|clinic|ambulance/i.test(i.type)
-    );
+    // Closest institution of ANY type — list is already sorted ascending.
+    const nearest = within[0];
     res.json({
       total: within.length,
       byType,
-      nearestHospital: nearestHospital
+      nearest: nearest
         ? {
-            id: nearestHospital.id,
-            name: nearestHospital.name,
-            type: nearestHospital.type,
-            distanceM: Math.round(nearestHospital.distanceM),
+            id: nearest.id,
+            name: nearest.name,
+            type: nearest.type,
+            distanceM: Math.round(nearest.distanceM),
           }
         : null,
       list: within.slice(0, 30),

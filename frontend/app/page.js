@@ -211,13 +211,15 @@ export default function HomePage() {
                       {nearbySummary.total} responder
                       {nearbySummary.total === 1 ? '' : 's'} within 15&nbsp;km
                     </li>
-                    {nearbySummary.nearestHospital ? (
+                    {nearbySummary.nearest && (
                       <li>
-                        Nearest hospital:{' '}
-                        {formatDistance(nearbySummary.nearestHospital.distanceM)}
+                        Nearest:{' '}
+                        <span className="font-medium text-slate-700">
+                          {nearbySummary.nearest.name}
+                        </span>{' '}
+                        ·{' '}
+                        {formatDistance(nearbySummary.nearest.distanceM)}
                       </li>
-                    ) : (
-                      <li className="text-slate-500">No hospital in range</li>
                     )}
                   </ul>
                 )}
