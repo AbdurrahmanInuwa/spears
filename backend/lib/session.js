@@ -11,8 +11,11 @@ function cookieOpts() {
   const isProd = process.env.NODE_ENV === 'production';
   return {
     httpOnly: true,
-    secure: isProd, // browsers require Secure for SameSite=None; for prod we'll also be on HTTPS
-    sameSite: 'lax',
+    // Cross-site cookies (Vercel frontend → EC2 backend) require both:
+    // SameSite=None and Secure. In dev (same-origin localhost) we keep
+    // Lax so the cookie still works without HTTPS.
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     path: '/',
     maxAge: TTL_S * 1000,
   };
