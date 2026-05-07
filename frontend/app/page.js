@@ -30,14 +30,12 @@ export default function HomePage() {
   const { isLoaded } = useJsApiLoader(googleMapsLoaderOptions);
   const placeFetchedRef = useRef(false);
 
-  // 1. Geolocate — only when the user clicks "Enable location" (we don't
-  // ask for permission on page load).
+  // 1. Geolocate — silent if the user has already granted permission in
+  // this browser; otherwise wait for them to click "Enable location" so we
+  // don't pop the native prompt on every page mount.
   const [requesting, setRequesting] = useState(false);
-  function requestLocation() {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGeoError('Geolocation not supported by this browser');
-      return;
-    }
+
+  function fetchPosition() {
     setRequesting(true);
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
@@ -58,6 +56,32 @@ export default function HomePage() {
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
+  }
+
+  // On mount: if permission is already granted (user unlocked it earlier
+  // in this browser), silently re-fetch so navigating away + back doesn't
+  // show the Enable button again.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeoError('Geolocation not supported by this browser');
+      return;
+    }
+    if (!navigator.permissions?.query) return; // Safari < 16 etc — no-op
+    navigator.permissions
+      .query({ name: 'geolocation' })
+      .then((res) => {
+        if (res.state === 'granted') fetchPosition();
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function requestLocation() {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeoError('Geolocation not supported by this browser');
+      return;
+    }
+    fetchPosition();
   }
 
   // 2. Reverse-geocode + AI place name (with localStorage cache)
@@ -159,7 +183,7 @@ export default function HomePage() {
                 {placeName
                   ? `You are in ${placeName}`
                   : location
-                    ? 'Locating you…'
+                    ? 'You are here'
                     : geoError
                       ? 'Location unavailable'
                       : 'Enable location to see your area'}
