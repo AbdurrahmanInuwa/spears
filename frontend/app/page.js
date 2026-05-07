@@ -30,14 +30,35 @@ export default function HomePage() {
   const { isLoaded } = useJsApiLoader(googleMapsLoaderOptions);
   const placeFetchedRef = useRef(false);
 
-  // 1. Geolocate — silent if the user has already granted permission in
-  // this browser; otherwise wait for them to click "Enable location" so we
-  // don't pop the native prompt on every page mount.
+  // 1. Geolocate
+  // ------------------------------------------------------------------
+  // On first land we want the browser's native location popup to appear
+  // immediately — accuracy + nearby-help info on the home page is useless
+  // without coordinates. The popup only fires when JS calls
+  // getCurrentPosition() *and* the browser's permission state is 'prompt'
+  // or 'granted'. We never call it when state is 'denied' because:
+  //   (a) the browser will not re-show the popup after a deny — that is a
+  //       hard browser-level rule, no JS workaround exists,
+  //   (b) calling getCurrentPosition() in 'denied' just throws code 1
+  //       silently, which would look like a no-op to the user.
+  // For 'denied' we instead surface guidance pointing them at the address
+  // bar lock icon, which is the only path back.
   const [requesting, setRequesting] = useState(false);
 
-  function fetchPosition() {
+  // Geolocation errors come in three flavors and we want different messages
+  // for each — historically we labelled them all "denied", which is wrong
+  // for codes 2 (POSITION_UNAVAILABLE) and 3 (TIMEOUT). Code 2 is also the
+  // most common "phantom failure" on macOS — the OS-level CoreLocation
+  // service couldn't compute a fix even though browser permission is granted
+  // (e.g. Wi-Fi is off, on a VPN, or System Settings → Location Services is
+  // disabled). For code 2 we retry once with low accuracy, which often works
+  // when the high-accuracy path can't get a cold-start fix.
+  function fetchPosition({ allowHighAccuracyRetry = true } = {}) {
     setRequesting(true);
     setGeoError(null);
+    const opts = allowHighAccuracyRetry
+      ? { enableHighAccuracy: true, timeout: 8000 }
+      : { enableHighAccuracy: false, timeout: 12000, maximumAge: 60_000 };
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
@@ -46,33 +67,63 @@ export default function HomePage() {
         setRequesting(false);
       },
       (err) => {
-        console.warn('geolocation denied:', err);
+        // 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT
+        if (err?.code === 2 && allowHighAccuracyRetry) {
+          console.warn('geolocation: high-accuracy failed, retrying coarse', err);
+          fetchPosition({ allowHighAccuracyRetry: false });
+          return;
+        }
+        console.warn('geolocation error:', err);
         setGeoError(
           err?.code === 1
             ? 'Location permission denied. Enable it in your browser settings.'
-            : 'Could not get your location'
+            : err?.code === 2
+              ? "Couldn't determine your location. Check that Location Services are on for this browser (macOS: System Settings → Privacy & Security → Location Services), and that Wi-Fi is enabled."
+              : err?.code === 3
+                ? 'Location request timed out. Try again.'
+                : 'Could not get your location'
         );
         setRequesting(false);
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      opts
     );
   }
 
-  // On mount: if permission is already granted (user unlocked it earlier
-  // in this browser), silently re-fetch so navigating away + back doesn't
-  // show the Enable button again.
+  // On mount: trigger the native popup right away for first-time visitors
+  // and silently refetch for returning ones. Skip only the 'denied' state
+  // since the browser refuses to re-prompt and we'd just be firing a
+  // guaranteed-failing call.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setGeoError('Geolocation not supported by this browser');
       return;
     }
-    if (!navigator.permissions?.query) return; // Safari < 16 etc — no-op
+    // Safari < 16 has no Permissions API. Safari shows its popup on the
+    // first getCurrentPosition() call regardless, so just fire it.
+    if (!navigator.permissions?.query) {
+      fetchPosition();
+      return;
+    }
     navigator.permissions
       .query({ name: 'geolocation' })
       .then((res) => {
-        if (res.state === 'granted') fetchPosition();
+        if (res.state === 'denied') {
+          // Browser will not re-show the popup. Tell the user where the
+          // unlock switch actually lives.
+          setGeoError(
+            'Location is blocked for this site. Click the lock or info icon in your address bar, allow Location, then reload the page.'
+          );
+          return;
+        }
+        // 'granted' → silent fix.
+        // 'prompt'  → fires the native popup.
+        fetchPosition();
       })
-      .catch(() => {});
+      .catch(() => {
+        // Permissions API failed — fall back to attempting the fix; the
+        // browser will handle prompting if needed.
+        fetchPosition();
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

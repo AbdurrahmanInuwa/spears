@@ -74,8 +74,12 @@ function SignInPageInner() {
       toast(
         `Welcome back, ${data.user?.firstName || data.user?.name || ''}`.trim()
       );
-      if (data.role === 'citizen') router.push('/dashboard');
-      else router.push('/institution');
+      // Use whichever role the server confirms; fall back to the tab the
+      // user was on if the response omitted it.
+      const finalRole = data.role || role;
+      if (finalRole === 'citizen') router.push('/dashboard');
+      else if (finalRole === 'institution') router.push('/institution');
+      else console.warn('login: unknown role in response', data);
     } catch (err) {
       console.error(err);
       toast('Network error. Is the server running?', { variant: 'error' });
