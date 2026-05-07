@@ -266,9 +266,6 @@ export default function InstitutionForm({ onBack }) {
           <h1 className="text-2xl font-extrabold text-slate-900">
             Verify your email
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Enter the 6-digit code we just sent to your response email.
-          </p>
           <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
             <OtpVerifyForm
               role="institution"
