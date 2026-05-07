@@ -9,6 +9,28 @@ import OtpVerifyForm from '../components/OtpVerifyForm';
 import { API_URL as SHARED_API_URL } from '../lib/api';
 
 const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
+// Self-signup minimum age. Family members under 13 are added by an adult
+// creator via SPAERS-ID lookup, not through this form.
+const MIN_AGE_YEARS = 13;
+
+// Today minus 13 years, formatted YYYY-MM-DD for the <input type="date" max>.
+function maxDobIso() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - MIN_AGE_YEARS);
+  return d.toISOString().slice(0, 10);
+}
+
+function ageFromDob(dob) {
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let years = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years--;
+  return years;
+}
+
 const RAW = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 // Ensure URL ends with /api (works whether the env var includes it or not)
 const API_URL = RAW.replace(/\/+$/, '').endsWith('/api')
@@ -55,6 +77,18 @@ export default function CitizenForm({ onBack }) {
     }
     if (form.password.length < 6) {
       toast('Password must be at least 6 characters', { variant: 'error' });
+      return;
+    }
+    // Age gate (server re-validates, but fail fast for a nicer UX).
+    const age = ageFromDob(form.dob);
+    if (age == null) {
+      toast('Please enter a valid date of birth', { variant: 'error' });
+      return;
+    }
+    if (age < MIN_AGE_YEARS) {
+      toast(`You must be at least ${MIN_AGE_YEARS} years old to create an account.`, {
+        variant: 'error',
+      });
       return;
     }
 
@@ -162,6 +196,7 @@ export default function CitizenForm({ onBack }) {
             type="date"
             value={form.dob}
             onChange={update('dob')}
+            max={maxDobIso()}
             required
             className={inputClass}
           />

@@ -9,6 +9,28 @@ const { sendOtpEmail } = require('../lib/notify');
 
 const router = express.Router();
 
+// Minimum age for self-registration. Under-13s should only appear in SPAERS
+// as family members, added by an adult creator — never with their own login.
+const MIN_AGE_YEARS = 13;
+const MAX_AGE_YEARS = 120;
+
+// Returns null if the DOB is acceptable, or an error string explaining why not.
+function dobValidationError(dob) {
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return 'Invalid date of birth';
+  const now = new Date();
+  if (d > now) return 'Date of birth cannot be in the future';
+  // Use calendar-aware year calculation to avoid leap-year off-by-one.
+  let years = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years--;
+  if (years < MIN_AGE_YEARS) {
+    return `You must be at least ${MIN_AGE_YEARS} years old to create an account.`;
+  }
+  if (years > MAX_AGE_YEARS) return 'Please enter a valid date of birth';
+  return null;
+}
+
 // POST /api/citizens/signup
 router.post('/signup', async (req, res) => {
   try {
@@ -35,6 +57,10 @@ router.post('/signup', async (req, res) => {
         fields: ['firstName', 'lastName', 'dob', 'email', 'phone', 'password'],
       });
     }
+
+    // Age gate (13+) — server-side enforcement, frontend can be bypassed.
+    const dobErr = dobValidationError(dob);
+    if (dobErr) return res.status(400).json({ error: dobErr });
 
     const normalizedEmail = String(email).trim().toLowerCase();
 
@@ -89,9 +115,87 @@ router.post('/signup', async (req, res) => {
   }
 });
 
+// DELETE /api/citizens/me
+// Permanently deletes the logged-in citizen's account. To prevent fat-finger
+// disasters the client must echo the exact phrase "Delete my account" in the
+// body. Cleanup order matters because of FK constraints:
+//   1. Detach from any in-flight emergencies (preserve audit log via SetNull)
+//   2. Hand off / dissolve the family if the deleted account was the creator
+//   3. Delete the citizen (Volunteer cascades automatically per schema)
+//   4. Best-effort S3 avatar cleanup (we can swallow failures here)
+//   5. Destroy the session cookie + Redis entry
+const s3 = require('../lib/s3');
+router.delete('/me', session.requireAuth('citizen'), async (req, res) => {
+  try {
+    const { confirmation } = req.body || {};
+    if (confirmation !== 'Delete my account') {
+      return res.status(400).json({
+        error: 'Type "Delete my account" exactly to confirm.',
+      });
+    }
+    const me = await prisma.citizen.findUnique({
+      where: { id: req.session.userId },
+      select: { id: true, familyId: true, avatarKey: true },
+    });
+    if (!me) return res.status(404).json({ error: 'Account not found' });
+
+    // 1. Detach from emergencies — Emergency.citizenId is nullable so we
+    //    keep the historical record without orphaning a hard FK.
+    await prisma.emergency.updateMany({
+      where: { citizenId: me.id },
+      data: { citizenId: null },
+    });
+
+    // 2. Family handoff
+    if (me.familyId) {
+      const fam = await prisma.family.findUnique({
+        where: { id: me.familyId },
+        include: { members: { select: { id: true, createdAt: true } } },
+      });
+      if (fam) {
+        const others = fam.members.filter((m) => m.id !== me.id);
+        if (others.length === 0) {
+          // Sole member — detach me first so the FK doesn't block deletion,
+          // then nuke the empty family row.
+          await prisma.citizen.update({
+            where: { id: me.id },
+            data: { familyId: null },
+          });
+          await prisma.family.delete({ where: { id: fam.id } });
+        } else if (fam.creatorId === me.id) {
+          // I was the creator — promote the longest-tenured surviving member
+          // so the family doesn't lose its admin.
+          const successor = others
+            .slice()
+            .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
+          await prisma.family.update({
+            where: { id: fam.id },
+            data: { creatorId: successor.id },
+          });
+        }
+      }
+    }
+
+    // 3. Delete the citizen (Volunteer cascades per schema)
+    await prisma.citizen.delete({ where: { id: me.id } });
+
+    // 4. Best-effort avatar cleanup
+    if (me.avatarKey) {
+      s3.deleteObject(me.avatarKey).catch(() => {});
+    }
+
+    // 5. Burn the session
+    await session.destroy(req, res);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete citizen/me error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // PATCH /api/citizens/me/avatar
 // Body: { avatarKey }  // pass null to remove
-const s3 = require('../lib/s3');
 router.patch('/me/avatar', session.requireAuth('citizen'), async (req, res) => {
   try {
     const { avatarKey } = req.body || {};

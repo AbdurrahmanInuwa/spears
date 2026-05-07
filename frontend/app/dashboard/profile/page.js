@@ -8,6 +8,7 @@ import { apiFetch } from '../../lib/api';
 import { uploadToS3, getSignedDownloadUrl } from '../../lib/uploads';
 import ChangePasswordModal from '../../components/ChangePasswordModal';
 import TwoFactorToggleModal from '../../components/TwoFactorToggleModal';
+import DeleteAccountModal from '../../components/DeleteAccountModal';
 
 function formatPhone(phone, country) {
   if (!phone) return '—';
@@ -28,6 +29,7 @@ export default function ProfilePage() {
   const [uploading, setUploading] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showTwoFactor, setShowTwoFactor] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
   const fileRef = useRef(null);
 
   // Resolve a fresh signed URL whenever the avatarKey changes
@@ -300,6 +302,36 @@ export default function ProfilePage() {
             />
           </SectionCard>
         </div>
+
+        {/* Danger zone — kept visually distinct so it's not mistaken for a
+            routine setting. Clicking opens a modal that requires the user to
+            type a confirmation phrase before the delete request fires. */}
+        <section className="mt-10 overflow-hidden rounded-xl border border-rose-200 bg-white shadow-sm">
+          <header className="flex items-center gap-2 border-b border-rose-100 bg-rose-50 px-5 py-3">
+            <span className="h-2 w-2 rounded-full bg-rose-500" />
+            <h2 className="text-[11px] font-bold uppercase tracking-[0.15em] text-rose-700">
+              Danger zone
+            </h2>
+          </header>
+          <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                Delete account
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Permanently remove your SPAERS account, medical profile, and
+                family membership. This cannot be undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowDelete(true)}
+              className="inline-flex shrink-0 items-center justify-center rounded-md border border-rose-300 bg-white px-4 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-600 hover:text-white"
+            >
+              Delete account
+            </button>
+          </div>
+        </section>
       </div>
 
       {showChangePassword && (
@@ -315,6 +347,9 @@ export default function ProfilePage() {
           onClose={() => setShowTwoFactor(false)}
           onChanged={(enabled) => setLocal({ twoFactorEnabled: enabled })}
         />
+      )}
+      {showDelete && (
+        <DeleteAccountModal onClose={() => setShowDelete(false)} />
       )}
     </div>
   );
