@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
 const otp = require('../lib/otp');
 const session = require('../lib/session');
+const pendingSignup = require('../lib/pendingSignup');
 const { sendOtpEmail } = require('../lib/notify');
 
 const router = express.Router();
@@ -263,34 +264,26 @@ router.post('/signup', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const institution = await prisma.institution.create({
-      data: {
-        name: String(name).trim(),
-        type: String(type).trim(),
-        yearEstablished: yearEstablished
-          ? Number(yearEstablished) || null
-          : null,
-        country: String(country).toUpperCase(),
-        address: String(address).trim(),
-        addressLat: typeof addressLat === 'number' ? addressLat : null,
-        addressLng: typeof addressLng === 'number' ? addressLng : null,
-        addressPlaceId: addressPlaceId || null,
-        centerLat,
-        centerLng,
-        coveragePolygon, // Json
-        coverageReason: coverageReason || null,
-        responseNumbers: numbers,
-        responseEmails: emails,
-        email: loginEmail,
-        passwordHash,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        type: true,
-        createdAt: true,
-      },
+    // Stash payload in Redis. Materialized to Postgres on OTP verify.
+    await pendingSignup.stash('institution', loginEmail, {
+      name: String(name).trim(),
+      type: String(type).trim(),
+      yearEstablished: yearEstablished
+        ? Number(yearEstablished) || null
+        : null,
+      country: String(country).toUpperCase(),
+      address: String(address).trim(),
+      addressLat: typeof addressLat === 'number' ? addressLat : null,
+      addressLng: typeof addressLng === 'number' ? addressLng : null,
+      addressPlaceId: addressPlaceId || null,
+      centerLat,
+      centerLng,
+      coveragePolygon,
+      coverageReason: coverageReason || null,
+      responseNumbers: numbers,
+      responseEmails: emails,
+      email: loginEmail,
+      passwordHash,
     });
 
     try {
@@ -306,7 +299,7 @@ router.post('/signup', async (req, res) => {
       console.error('OTP issue error:', e);
     }
 
-    res.status(201).json({ institution, pendingVerification: true });
+    res.status(201).json({ pendingVerification: true });
   } catch (err) {
     console.error('Institution signup error:', err);
     res.status(500).json({ error: 'Internal server error' });

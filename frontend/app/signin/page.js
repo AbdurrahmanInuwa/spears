@@ -59,6 +59,7 @@ function SignInPageInner() {
       const data = await res.json().catch(() => ({}));
 
       if (res.status === 202 && data.pending2FA) {
+        setSubmitting(false); // free the button before the screen swaps
         setPending2FA({ role: data.role, email: username.trim().toLowerCase() });
         toast('Verification code sent');
         return;
@@ -69,6 +70,7 @@ function SignInPageInner() {
       }
       // Single-factor success — server set the cookie, hydrate context
       await refresh();
+      setSubmitting(false);
       toast(
         `Welcome back, ${data.user?.firstName || data.user?.name || ''}`.trim()
       );

@@ -4,6 +4,7 @@ const prisma = require('../lib/prisma');
 const { generateUniqueSpaersId } = require('../lib/spaersId');
 const otp = require('../lib/otp');
 const session = require('../lib/session');
+const pendingSignup = require('../lib/pendingSignup');
 const { sendOtpEmail } = require('../lib/notify');
 
 const router = express.Router();
@@ -47,38 +48,27 @@ router.post('/signup', async (req, res) => {
         .json({ error: 'An account with this email already exists' });
     }
 
+    // Hash password now so the cleartext never sits in Redis
     const passwordHash = await bcrypt.hash(password, 10);
-    const spaersId = await generateUniqueSpaersId(prisma);
 
-    const citizen = await prisma.citizen.create({
-      data: {
-        spaersId,
-        firstName: String(firstName).trim(),
-        lastName: String(lastName).trim(),
-        dob: new Date(dob),
-        email: normalizedEmail,
-        phone: String(phone).trim(),
-        country: country ? String(country).toUpperCase() : null,
-        bloodGroup: bloodGroup || null,
-        allergies: hasAllergies ? allergies || null : null,
-        chronicCondition: hasChronicCondition ? chronicCondition || null : null,
-        implantDevice: Boolean(implantDevice),
-        passwordHash,
-      },
-      select: {
-        id: true,
-        spaersId: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        country: true,
-        avatarKey: true,
-        createdAt: true,
-      },
+    // Stash the full payload in Redis under a 30-min key. Materialized to
+    // Postgres only after the user verifies the OTP.
+    await pendingSignup.stash('citizen', normalizedEmail, {
+      firstName: String(firstName).trim(),
+      lastName: String(lastName).trim(),
+      dob: dob,
+      email: normalizedEmail,
+      phone: String(phone).trim(),
+      country: country ? String(country).toUpperCase() : null,
+      bloodGroup: bloodGroup || null,
+      allergies: hasAllergies ? allergies || null : null,
+      chronicCondition: hasChronicCondition
+        ? chronicCondition || null
+        : null,
+      implantDevice: Boolean(implantDevice),
+      passwordHash,
     });
 
-    // Issue + email a 6-digit verification OTP. Don't block account creation
-    // on email failure — user can resend.
     try {
       const issued = await otp.issue('signup', 'citizen', normalizedEmail);
       if (issued.code) {
@@ -92,7 +82,7 @@ router.post('/signup', async (req, res) => {
       console.error('OTP issue error:', e);
     }
 
-    res.status(201).json({ citizen, pendingVerification: true });
+    res.status(201).json({ pendingVerification: true });
   } catch (err) {
     console.error('Citizen signup error:', err);
     res.status(500).json({ error: 'Internal server error' });

@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
 const otp = require('../lib/otp');
 const session = require('../lib/session');
+const pendingSignup = require('../lib/pendingSignup');
+const { generateUniqueSpaersId } = require('../lib/spaersId');
 const { sendOtpEmail } = require('../lib/notify');
 
 const router = express.Router();
@@ -186,10 +188,74 @@ router.post('/verify-otp', async (req, res) => {
               : 'Too many attempts. Request a new code.',
       });
     }
-    await M.update({
-      where: { email: normalizedEmail },
-      data: { emailVerifiedAt: new Date() },
-    });
+
+    // Materialize the row from the Redis-stashed payload (or, if a row
+    // already exists from a legacy signup, just flip emailVerifiedAt).
+    const existing = await M.findUnique({ where: { email: normalizedEmail } });
+    if (existing) {
+      await M.update({
+        where: { email: normalizedEmail },
+        data: { emailVerifiedAt: new Date() },
+      });
+    } else {
+      const stash = await pendingSignup.get(role, normalizedEmail);
+      if (!stash) {
+        return res.status(400).json({
+          error:
+            'Signup session expired. Start over to receive a new code.',
+        });
+      }
+      try {
+        if (role === 'citizen') {
+          const spaersId = await generateUniqueSpaersId(prisma);
+          await prisma.citizen.create({
+            data: {
+              spaersId,
+              firstName: stash.firstName,
+              lastName: stash.lastName,
+              dob: new Date(stash.dob),
+              email: normalizedEmail,
+              phone: stash.phone,
+              country: stash.country,
+              bloodGroup: stash.bloodGroup,
+              allergies: stash.allergies,
+              chronicCondition: stash.chronicCondition,
+              implantDevice: !!stash.implantDevice,
+              passwordHash: stash.passwordHash,
+              emailVerifiedAt: new Date(),
+            },
+          });
+        } else {
+          await prisma.institution.create({
+            data: {
+              name: stash.name,
+              type: stash.type,
+              yearEstablished: stash.yearEstablished,
+              country: stash.country,
+              address: stash.address,
+              addressLat: stash.addressLat,
+              addressLng: stash.addressLng,
+              addressPlaceId: stash.addressPlaceId,
+              centerLat: stash.centerLat,
+              centerLng: stash.centerLng,
+              coveragePolygon: stash.coveragePolygon,
+              coverageReason: stash.coverageReason,
+              responseNumbers: stash.responseNumbers,
+              responseEmails: stash.responseEmails,
+              email: stash.email,
+              passwordHash: stash.passwordHash,
+              emailVerifiedAt: new Date(),
+            },
+          });
+        }
+      } catch (createErr) {
+        console.error('Materialize signup error:', createErr);
+        return res
+          .status(500)
+          .json({ error: 'Could not finalize signup. Try again.' });
+      }
+      await pendingSignup.clear(role, normalizedEmail);
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Verify OTP error:', err);
